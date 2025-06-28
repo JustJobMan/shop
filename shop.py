@@ -3,21 +3,19 @@ import requests
 from flask import Flask, jsonify, render_template_string
 from datetime import datetime, timedelta
 import json
-import base64 # Basic 인증 방식 사용 시 필요
+import base64 # Basic 인증 방식 사용 시 필요 (Access Token 발급에 필요)
 
 app = Flask(__name__)
 
 # --- 설정 (환경 변수에서 가져오는 것을 권장) ---
-# 실제 키는 코드에 직접 넣지 말고, Replit Secrets나 Koyeb 환경 변수에 저장하세요!
 IMWEB_API_KEY = os.environ.get('IMWEB_API_KEY')       # 아임웹에서 발급받은 API Key
 IMWEB_SECRET_KEY = os.environ.get('IMWEB_SECRET_KEY') # 아임웹에서 발급받은 Secret Key
 
-# 아임웹 API 기본 URL (찾아주신 정보에 기반하여 정확히 설정)
+# 아임웹 API 기본 URL (아임웹 개발자 문서에 있는 기본 API URL)
 IMWEB_API_BASE_URL = "https://api.imweb.me/v2" 
+IMWEB_OAUTH_TOKEN_URL = "https://api.imweb.me/oauth/token" # Access Token 발급 URL (아임웹 문서 확인)
 
 # 조회할 특정 멤버들의 정보 (회원 아이디 또는 회원명)
-# 이 리스트의 'uid' 값을 실제 아임웹 회원 아이디로 변경해야 합니다!
-# 아임웹 관리자 페이지에서 회원 정보를 조회하여 '회원코드(UID)'를 확인하세요.
 TARGET_MEMBERS = [
     {"display_name": "멤버 A", "uid": "guiwoong"}, # 실제 아임웹 회원 아이디로 변경
     {"display_name": "멤버 B", "uid": "wereer@hotmail.com"},
@@ -31,24 +29,68 @@ cached_points_data = None
 cache_expiry_time = None
 CACHE_DURATION_MINUTES = 5 # 5분마다 데이터 갱신
 
-# --- API 호출을 위한 헤더 생성 함수 (아임웹 문서 기반) ---
-def get_imweb_headers():
-    if not IMWEB_API_KEY or not IMWEB_SECRET_KEY:
-        raise ValueError("IMWEB_API_KEY 또는 IMWEB_SECRET_KEY 환경 변수가 설정되지 않았습니다.")
+# Access Token 캐싱을 위한 전역 변수
+cached_access_token = None
+access_token_expiry = None
 
-    # 아임웹 개발자 문서에 명시된 Basic 인증 방식 적용
-    auth_string = f"{IMWEB_API_KEY}:{IMWEB_SECRET_KEY}"
-    encoded_auth_string = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+# --- Access Token 발급 함수 ---
+def get_imweb_access_token():
+    global cached_access_token, access_token_expiry
+
+    # 캐시된 토큰이 있고 만료되지 않았다면 캐시 사용
+    if cached_access_token and access_token_expiry and datetime.now() < access_token_expiry:
+        print("캐시된 Access Token 사용")
+        return cached_access_token
+
+    if not IMWEB_API_KEY or not IMWEB_SECRET_KEY:
+        raise ValueError("IMWEB_API_KEY 또는 IMWEB_SECRET_KEY가 설정되지 않았습니다.")
 
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Basic {encoded_auth_string}"
+        "Content-Type": "application/json"
     }
-    return headers
+    # Access Token 발급 요청 바디 (아임웹 문서 확인 필수)
+    # grant_type은 "client_credentials" 또는 "authorization_code" 등 아임웹이 요구하는 방식
+    payload = {
+        "grant_type": "client_credentials", 
+        "client_id": IMWEB_API_KEY,
+        "client_secret": IMWEB_SECRET_KEY
+    }
+
+    try:
+        response = requests.post(IMWEB_OAUTH_TOKEN_URL, headers=headers, data=json.dumps(payload))
+        response.raise_for_status() # HTTP 오류 발생 시 예외 발생
+        token_data = response.json()
+        
+        access_token = token_data.get("access_token")
+        expires_in = token_data.get("expires_in") # 토큰 유효 기간 (초 단위)
+
+        if not access_token:
+            raise ValueError("Access Token 발급 실패: 응답에 access_token이 없습니다.")
+
+        # 토큰 캐시 및 만료 시간 설정 (만료 1분 전 갱신하도록 설정)
+        cached_access_token = access_token
+        access_token_expiry = datetime.now() + timedelta(seconds=expires_in - 60) 
+
+        print("새로운 Access Token 발급 성공")
+        return access_token
+
+    except requests.exceptions.RequestException as e:
+        raise ConnectionError(f"Access Token 발급 API 호출 실패: {e}")
+    except ValueError as e:
+        raise ValueError(f"Access Token 응답 처리 실패: {e}")
+    except Exception as e:
+        raise Exception(f"Access Token 발급 중 알 수 없는 오류 발생: {e}")
+
 
 # --- 모든 회원의 포인트 조회 함수 (GET /member/members 사용) ---
 def get_all_members_with_points():
-    headers = get_imweb_headers()
+    # Access Token 발급/가져오기
+    access_token = get_imweb_access_token()
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}" # 발급받은 Access Token 사용
+    }
     
     # 찾아주신 정확한 API 엔드포인트 반영
     api_url = f"{IMWEB_API_BASE_URL}/member/members" 
