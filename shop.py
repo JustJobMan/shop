@@ -17,11 +17,11 @@ IMWEB_OAUTH_TOKEN_URL = "https://api.imweb.me/oauth/token" # Access Token 발급
 
 # 조회할 특정 멤버들의 정보 (회원 아이디 또는 회원명)
 TARGET_MEMBERS = [
-    {"display_name": "멤버 A", "uid": "guiwoong"}, # 실제 아임웹 회원 아이디로 변경
-    {"display_name": "멤버 B", "uid": "wereer@hotmail.com"},
-    {"display_name": "멤버 C", "uid": "	1210@naver.com"},
-    {"display_name": "멤버 D", "uid": "	happytmvhs00@naver.com"},
-    {"display_name": "멤버 E", "uid": "	dydtn2132@naver.com"},
+    {"display_name": "멤버 A", "uid": "your_memberA_uid_here"}, # 실제 아임웹 회원 UID로 변경
+    {"display_name": "멤버 B", "uid": "your_memberB_uid_here"},
+    {"display_name": "멤버 C", "uid": "your_memberC_uid_here"},
+    {"display_name": "멤버 D", "uid": "your_memberD_uid_here"},
+    {"display_name": "멤버 E", "uid": "your_memberE_uid_here"},
 ]
 
 # 데이터 캐싱 (API 호출 제한 방지)
