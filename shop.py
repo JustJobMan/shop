@@ -8,13 +8,16 @@ import base64 # Basic 인증 방식 사용 시 필요
 app = Flask(__name__)
 
 # --- 설정 (환경 변수에서 가져오는 것을 권장) ---
-IMWEB_API_KEY = os.environ.get('IMWEB_API_KEY')       # Replit Secrets 등에 저장
-IMWEB_SECRET_KEY = os.environ.get('IMWEB_SECRET_KEY') # Replit Secrets 등에 저장
-IMWEB_API_BASE_URL = "https://old-developers.imweb.me" # 아임웹 개발자 문서에 있는 기본 URL (실제 API URL은 다를 수 있음)
+# 실제 키는 코드에 직접 넣지 말고, Replit Secrets나 Koyeb 환경 변수에 저장하세요!
+IMWEB_API_KEY = os.environ.get('IMWEB_API_KEY')       # 아임웹에서 발급받은 API Key
+IMWEB_SECRET_KEY = os.environ.get('IMWEB_SECRET_KEY') # 아임웹에서 발급받은 Secret Key
+
+# 아임웹 API 기본 URL (찾아주신 정보에 기반하여 정확히 설정)
+IMWEB_API_BASE_URL = "https://api.imweb.me/v2" 
 
 # 조회할 특정 멤버들의 정보 (회원 아이디 또는 회원명)
-# 아임웹 API가 회원 아이디(uid)로 조회를 지원하는지, 회원명(name)으로 조회를 지원하는지 확인 필요
-# 여기서는 회원 아이디(uid)를 사용한다고 가정합니다.
+# 이 리스트의 'uid' 값을 실제 아임웹 회원 아이디로 변경해야 합니다!
+# 아임웹 관리자 페이지에서 회원 정보를 조회하여 '회원코드(UID)'를 확인하세요.
 TARGET_MEMBERS = [
     {"display_name": "멤버 A", "uid": "guiwoong"}, # 실제 아임웹 회원 아이디로 변경
     {"display_name": "멤버 B", "uid": "wereer@hotmail.com"},
@@ -28,58 +31,53 @@ cached_points_data = None
 cache_expiry_time = None
 CACHE_DURATION_MINUTES = 5 # 5분마다 데이터 갱신
 
-# --- API 호출을 위한 헤더 생성 함수 (아임웹 문서 기반으로 수정 필요) ---
+# --- API 호출을 위한 헤더 생성 함수 (아임웹 문서 기반) ---
 def get_imweb_headers():
     if not IMWEB_API_KEY or not IMWEB_SECRET_KEY:
-        raise ValueError("IMWEB_API_KEY 또는 IMWEB_SECRET_KEY가 설정되지 않았습니다.")
+        raise ValueError("IMWEB_API_KEY 또는 IMWEB_SECRET_KEY 환경 변수가 설정되지 않았습니다.")
 
-    # 아임웹 개발자 문서에 명시된 정확한 헤더 형식을 사용해야 합니다.
-    # 예시 1: Authorization: Bearer [API_KEY] (Secret Key는 서버 측에서 검증)
-    # 예시 2: X-API-KEY: [API_KEY], X-SECRET-KEY: [SECRET_KEY]
-    # 예시 3: Authorization: Basic Base64(API_KEY:SECRET_KEY)
-    
-    # 아임웹 개발자 문서의 회원 조회 API 예시를 보면 'Authorization: Basic' 방식이 사용됩니다.
-    # https://old-developers.imweb.me/members/get (이 URL을 참고했습니다.)
+    # 아임웹 개발자 문서에 명시된 Basic 인증 방식 적용
     auth_string = f"{IMWEB_API_KEY}:{IMWEB_SECRET_KEY}"
-    encoded_auth_string = base64.b64encode(auth_string.encode()).decode('utf-8')
+    encoded_auth_string = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Basic {encoded_auth_string}" # 아임웹 문서에 따른 인증 헤더
+        "Authorization": f"Basic {encoded_auth_string}"
     }
     return headers
 
-# --- 특정 멤버의 포인트 조회 함수 ---
-def get_member_point_by_uid(member_uid):
+# --- 모든 회원의 포인트 조회 함수 (GET /member/members 사용) ---
+def get_all_members_with_points():
     headers = get_imweb_headers()
     
-    # 아임웹 회원 조회 API 엔드포인트
-    # https://old-developers.imweb.me/members/get 참고
-    # uid로 조회하는 파라미터가 있는지 확인 필요 (문서에 'uid' 파라미터가 있습니다!)
-    api_url = f"{IMWEB_API_BASE_URL}/members"
-    params = {"uid": member_uid} # uid 파라미터로 특정 회원 조회
-
+    # 찾아주신 정확한 API 엔드포인트 반영
+    api_url = f"{IMWEB_API_BASE_URL}/member/members" 
+    
     try:
-        response = requests.get(api_url, headers=headers, params=params)
-        response.raise_for_status()
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status() # HTTP 오류 발생 시 예외 발생
         data = response.json()
 
-        # 응답 데이터 구조 확인: 'data' 안에 리스트가 있고, 그 안에 회원 정보가 있을 수 있음
-        # 아임웹 회원 조회 API는 단일 회원을 조회해도 리스트 형태로 반환할 수 있습니다.
-        members_data = data.get('data', [])
-        if members_data:
-            # 첫 번째 회원 정보에서 포인트 가져오기
-            member_info = members_data[0]
-            # 'point_amount' 항목이 포인트입니다.
-            return member_info.get('point_amount', 0) 
-        return 0 # 회원 정보가 없으면 0 포인트 반환
+        if data.get('code') != 200: # 아임웹 API 응답 코드 확인
+            raise Exception(f"아임웹 API 오류: {data.get('msg', '알 수 없는 오류')}")
+
+        members_data = data.get('data', []) # 'data' 키 안에 회원 리스트가 있음
+        
+        all_member_points = {}
+        for member in members_data:
+            # 아임웹 API 응답에서 'uid'와 'point_amount' 필드 사용
+            uid = member.get('uid')
+            point_amount = member.get('point_amount', 0)
+            if uid:
+                all_member_points[uid] = point_amount
+        return all_member_points
 
     except requests.exceptions.RequestException as e:
-        print(f"회원 UID {member_uid} 포인트 조회 중 오류 발생: {e}")
-        return -1 # 오류 발생 시 -1 반환 (오류 처리용)
+        raise ConnectionError(f"아임웹 API 호출 실패: {e}")
+    except json.JSONDecodeError:
+        raise ValueError("아임웹 API 응답이 유효한 JSON 형식이 아닙니다.")
     except Exception as e:
-        print(f"회원 UID {member_uid} 데이터 처리 중 오류 발생: {e}")
-        return -1
+        raise Exception(f"회원 포인트 데이터 처리 중 알 수 없는 오류 발생: {e}")
 
 # --- Flask 라우트 핸들러 ---
 @app.route('/public-specific-member-points')
@@ -92,24 +90,21 @@ def get_public_specific_member_points():
         return jsonify(cached_points_data)
 
     try:
-        # 각 타겟 멤버의 포인트 조회
+        # 모든 회원의 포인트를 한 번에 가져옴
+        all_imweb_points = get_all_members_with_points()
+
+        # 타겟 멤버들의 포인트만 추출
         member_points_list = []
         for member_info in TARGET_MEMBERS:
-            uid = member_info["uid"]
             display_name = member_info["display_name"]
+            target_uid = member_info["uid"]
             
-            points = get_member_point_by_uid(uid)
+            points = all_imweb_points.get(target_uid, "조회 불가") # UID로 포인트 찾기
             
-            if points != -1: # 조회 성공 시
-                member_points_list.append({
-                    "display_name": display_name,
-                    "points": points
-                })
-            else: # 조회 실패 시
-                member_points_list.append({
-                    "display_name": display_name,
-                    "points": "조회 불가" # 또는 0, 또는 오류 메시지
-                })
+            member_points_list.append({
+                "display_name": display_name,
+                "points": points
+            })
 
         # 캐시 업데이트
         cached_points_data = {"success": True, "data": member_points_list}
@@ -118,6 +113,8 @@ def get_public_specific_member_points():
 
     except ValueError as e:
         return jsonify({"error": str(e)}), 500
+    except ConnectionError as e:
+        return jsonify({"error": "아임웹 API 연결 오류", "details": str(e)}), 500
     except Exception as e:
         print(f"서버 내부 오류: {e}")
         return jsonify({"error": "서버 내부 오류", "details": str(e)}), 500
