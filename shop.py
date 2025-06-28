@@ -3,11 +3,9 @@ import requests
 from flask import Flask, jsonify, render_template_string
 from datetime import datetime, timedelta
 import json
-import base64 # Basic 인증 방식 사용 시 필요 (Access Token 발급에 필요)
-from flask_cors import CORS
+# import base64 # Basic 인증 방식 사용 시 필요 (이 방식에서는 필요 없음)
 
 app = Flask(__name__)
-CORS(app)
 
 # --- 설정 (환경 변수에서 가져오는 것을 권장) ---
 IMWEB_API_KEY = os.environ.get('IMWEB_API_KEY')       # 아임웹에서 발급받은 API Key
@@ -15,7 +13,7 @@ IMWEB_SECRET_KEY = os.environ.get('IMWEB_SECRET_KEY') # 아임웹에서 발급�
 
 # 아임웹 API 기본 URL (아임웹 개발자 문서에 있는 기본 API URL)
 IMWEB_API_BASE_URL = "https://api.imweb.me/v2" 
-IMWEB_OAUTH_TOKEN_URL = "https://api.imweb.me/oauth/token" # Access Token 발급 URL (아임웹 문서 확인)
+IMWEB_OAUTH_TOKEN_URL = "https://api.imweb.me/oauth/token" # Access Token 발급 URL (문서 확인)
 
 # 조회할 특정 멤버들의 정보 (회원 아이디 또는 회원명)
 TARGET_MEMBERS = [
@@ -47,11 +45,11 @@ def get_imweb_access_token():
     if not IMWEB_API_KEY or not IMWEB_SECRET_KEY:
         raise ValueError("IMWEB_API_KEY 또는 IMWEB_SECRET_KEY가 설정되지 않았습니다.")
 
+    # 문서에 명시된 Content-Type 사용
     headers = {
-        "Content-Type": "application/json"
+        "Content-Type": "application/x-www-form-urlencoded" 
     }
-    # Access Token 발급 요청 바디 (아임웹 문서 확인 필수)
-    # grant_type은 "client_credentials" 또는 "authorization_code" 등 아임웹이 요구하는 방식
+    # 문서에 명시된 요청 데이터 (JSON.dumps 사용 안 함)
     payload = {
         "grant_type": "client_credentials", 
         "client_id": IMWEB_API_KEY,
@@ -59,7 +57,8 @@ def get_imweb_access_token():
     }
 
     try:
-        response = requests.post(IMWEB_OAUTH_TOKEN_URL, headers=headers, data=json.dumps(payload))
+        # data=payload 로 폼 데이터 전송
+        response = requests.post(IMWEB_OAUTH_TOKEN_URL, headers=headers, data=payload)
         response.raise_for_status() # HTTP 오류 발생 시 예외 발생
         token_data = response.json()
         
@@ -67,7 +66,7 @@ def get_imweb_access_token():
         expires_in = token_data.get("expires_in") # 토큰 유효 기간 (초 단위)
 
         if not access_token:
-            raise ValueError("Access Token 발급 실패: 응답에 access_token이 없습니다.")
+            raise ValueError(f"Access Token 발급 실패: 응답에 access_token이 없습니다. 응답: {token_data}")
 
         # 토큰 캐시 및 만료 시간 설정 (만료 1분 전 갱신하도록 설정)
         cached_access_token = access_token
@@ -77,7 +76,12 @@ def get_imweb_access_token():
         return access_token
 
     except requests.exceptions.RequestException as e:
-        raise ConnectionError(f"Access Token 발급 API 호출 실패: {e}")
+        # HTTP 오류 응답을 자세히 로깅
+        if e.response is not None:
+            print(f"Access Token 발급 API 호출 실패 (HTTP {e.response.status_code}): {e.response.text}")
+            raise ConnectionError(f"Access Token 발급 API 호출 실패: {e.response.status_code} - {e.response.text}")
+        else:
+            raise ConnectionError(f"Access Token 발급 API 호출 실패: {e}")
     except ValueError as e:
         raise ValueError(f"Access Token 응답 처리 실패: {e}")
     except Exception as e:
@@ -117,7 +121,12 @@ def get_all_members_with_points():
         return all_member_points
 
     except requests.exceptions.RequestException as e:
-        raise ConnectionError(f"아임웹 API 호출 실패: {e}")
+        # HTTP 오류 응답을 자세히 로깅
+        if e.response is not None:
+            print(f"회원 포인트 API 호출 실패 (HTTP {e.response.status_code}): {e.response.text}")
+            raise ConnectionError(f"회원 포인트 API 호출 실패: {e.response.status_code} - {e.response.text}")
+        else:
+            raise ConnectionError(f"회원 포인트 API 호출 실패: {e}")
     except json.JSONDecodeError:
         raise ValueError("아임웹 API 응답이 유효한 JSON 형식이 아닙니다.")
     except Exception as e:
