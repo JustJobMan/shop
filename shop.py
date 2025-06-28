@@ -4,8 +4,10 @@ from flask import Flask, jsonify, render_template_string
 from datetime import datetime, timedelta
 import json
 import base64 # Basic 인증 방식 사용 시 필요 (Access Token 발급에 필요)
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 # --- 설정 (환경 변수에서 가져오는 것을 권장) ---
 IMWEB_API_KEY = os.environ.get('IMWEB_API_KEY')       # 아임웹에서 발급받은 API Key
