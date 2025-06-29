@@ -1,177 +1,58 @@
+from flask import Flask, jsonify, request
 import os
-import requests
-from flask import Flask, jsonify, render_template_string
-from datetime import datetime, timedelta
-import json
-# import base64 # Basic 인증 방식 사용 시 필요 (이 방식에서는 필요 없음)
 
+# --- Flask 앱 초기화 ---
 app = Flask(__name__)
 
-# --- 설정 (환경 변수에서 가져오는 것을 권장) ---
-IMWEB_API_KEY = os.environ.get('IMWEB_API_KEY')       # 아임웹에서 발급받은 API Key
-IMWEB_SECRET_KEY = os.environ.get('IMWEB_SECRET_KEY') # 아임웹에서 발급받은 Secret Key
+# --- 루트 경로 라우트 추가 (Replit 웹뷰 404 방지용) ---
+@app.route('/')
+def index():
+    return "안녕하세요! Flask 서버가 정상적으로 작동 중입니다. /public-specific-member-points 로 요청하세요."
 
-# 아임웹 API 기본 URL (아임웹 개발자 문서에 있는 기본 API URL)
-IMWEB_API_BASE_URL = "https://api.imweb.me/v2" 
-IMWEB_OAUTH_TOKEN_URL = "https://api.imweb.me/oauth/token" # Access Token 발급 URL (문서 확인)
-
-# 조회할 특정 멤버들의 정보 (회원 아이디 또는 회원명)
-TARGET_MEMBERS = [
-    {"display_name": "멤버 A", "uid": "your_memberA_uid_here"}, # 실제 아임웹 회원 UID로 변경
-    {"display_name": "멤버 B", "uid": "your_memberB_uid_here"},
-    {"display_name": "멤버 C", "uid": "your_memberC_uid_here"},
-    {"display_name": "멤버 D", "uid": "your_memberD_uid_here"},
-    {"display_name": "멤버 E", "uid": "your_memberE_uid_here"},
-]
-
-# 데이터 캐싱 (API 호출 제한 방지)
-cached_points_data = None
-cache_expiry_time = None
-CACHE_DURATION_MINUTES = 5 # 5분마다 데이터 갱신
-
-# Access Token 캐싱을 위한 전역 변수
-cached_access_token = None
-access_token_expiry = None
-
-# --- Access Token 발급 함수 ---
-def get_imweb_access_token():
-    global cached_access_token, access_token_expiry
-
-    # 캐시된 토큰이 있고 만료되지 않았다면 캐시 사용
-    if cached_access_token and access_token_expiry and datetime.now() < access_token_expiry:
-        print("캐시된 Access Token 사용")
-        return cached_access_token
-
-    if not IMWEB_API_KEY or not IMWEB_SECRET_KEY:
-        raise ValueError("IMWEB_API_KEY 또는 IMWEB_SECRET_KEY가 설정되지 않았습니다.")
-
-    # 문서에 명시된 Content-Type 사용
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded" 
-    }
-    # 문서에 명시된 요청 데이터 (JSON.dumps 사용 안 함)
-    payload = {
-        "grant_type": "client_credentials", 
-        "client_id": IMWEB_API_KEY,
-        "client_secret": IMWEB_SECRET_KEY
-    }
-
-    try:
-        # data=payload 로 폼 데이터 전송
-        response = requests.post(IMWEB_OAUTH_TOKEN_URL, headers=headers, data=payload)
-        response.raise_for_status() # HTTP 오류 발생 시 예외 발생
-        token_data = response.json()
-        
-        access_token = token_data.get("access_token")
-        expires_in = token_data.get("expires_in") # 토큰 유효 기간 (초 단위)
-
-        if not access_token:
-            raise ValueError(f"Access Token 발급 실패: 응답에 access_token이 없습니다. 응답: {token_data}")
-
-        # 토큰 캐시 및 만료 시간 설정 (만료 1분 전 갱신하도록 설정)
-        cached_access_token = access_token
-        access_token_expiry = datetime.now() + timedelta(seconds=expires_in - 60) 
-
-        print("새로운 Access Token 발급 성공")
-        return access_token
-
-    except requests.exceptions.RequestException as e:
-        # HTTP 오류 응답을 자세히 로깅
-        if e.response is not None:
-            print(f"Access Token 발급 API 호출 실패 (HTTP {e.response.status_code}): {e.response.text}")
-            raise ConnectionError(f"Access Token 발급 API 호출 실패: {e.response.status_code} - {e.response.text}")
-        else:
-            raise ConnectionError(f"Access Token 발급 API 호출 실패: {e}")
-    except ValueError as e:
-        raise ValueError(f"Access Token 응답 처리 실패: {e}")
-    except Exception as e:
-        raise Exception(f"Access Token 발급 중 알 수 없는 오류 발생: {e}")
-
-
-# --- 모든 회원의 포인트 조회 함수 (GET /member/members 사용) ---
-def get_all_members_with_points():
-    # Access Token 발급/가져오기
-    access_token = get_imweb_access_token()
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {access_token}" # 발급받은 Access Token 사용
-    }
-    
-    # 찾아주신 정확한 API 엔드포인트 반영
-    api_url = f"{IMWEB_API_BASE_URL}/member/members" 
-    
-    try:
-        response = requests.get(api_url, headers=headers)
-        response.raise_for_status() # HTTP 오류 발생 시 예외 발생
-        data = response.json()
-
-        if data.get('code') != 200: # 아임웹 API 응답 코드 확인
-            raise Exception(f"아임웹 API 오류: {data.get('msg', '알 수 없는 오류')}")
-
-        members_data = data.get('data', []) # 'data' 키 안에 회원 리스트가 있음
-        
-        all_member_points = {}
-        for member in members_data:
-            # 아임웹 API 응답에서 'uid'와 'point_amount' 필드 사용
-            uid = member.get('uid')
-            point_amount = member.get('point_amount', 0)
-            if uid:
-                all_member_points[uid] = point_amount
-        return all_member_points
-
-    except requests.exceptions.RequestException as e:
-        # HTTP 오류 응답을 자세히 로깅
-        if e.response is not None:
-            print(f"회원 포인트 API 호출 실패 (HTTP {e.response.status_code}): {e.response.text}")
-            raise ConnectionError(f"회원 포인트 API 호출 실패: {e.response.status_code} - {e.response.text}")
-        else:
-            raise ConnectionError(f"회원 포인트 API 호출 실패: {e}")
-    except json.JSONDecodeError:
-        raise ValueError("아임웹 API 응답이 유효한 JSON 형식이 아닙니다.")
-    except Exception as e:
-        raise Exception(f"회원 포인트 데이터 처리 중 알 수 없는 오류 발생: {e}")
-
-# --- Flask 라우트 핸들러 ---
+# --- API 엔드포인트 정의 ---
 @app.route('/public-specific-member-points')
 def get_public_specific_member_points():
-    global cached_points_data, cache_expiry_time
-
-    # 캐시된 데이터가 유효하면 캐시 사용
-    if cached_points_data and cache_expiry_time and datetime.now() < cache_expiry_time:
-        print("캐시된 특정 회원 포인트 데이터 사용")
-        return jsonify(cached_points_data)
-
+    # 실제 데이터베이스나 다른 소스에서 데이터를 가져오는 로직
+    # 여기서는 예시 데이터를 사용합니다.
     try:
-        # 모든 회원의 포인트를 한 번에 가져옴
-        all_imweb_points = get_all_members_with_points()
+        # 실제 데이터는 여기서 가져와야 합니다.
+        # 예시 데이터 (실제 사용 시에는 이 부분을 데이터베이스 연동 등으로 대체하세요)
+        member_points_data = [
+            {"display_name": "첫 번째 회원", "points": 12345},
+            {"display_name": "두 번째 회원", "points": 6789},
+            {"display_name": "세 번째 회원", "points": 9876},
+            {"display_name": "네 번째 회원", "points": 54321}
+        ]
 
-        # 타겟 멤버들의 포인트만 추출
-        member_points_list = []
-        for member_info in TARGET_MEMBERS:
-            display_name = member_info["display_name"]
-            target_uid = member_info["uid"]
-            
-            points = all_imweb_points.get(target_uid, "조회 불가") # UID로 포인트 찾기
-            
-            member_points_list.append({
-                "display_name": display_name,
-                "points": points
-            })
+        # 성공 응답 반환
+        return jsonify({
+            "success": True,
+            "data": member_points_data,
+            "message": "회원 포인트 정보를 성공적으로 불러왔습니다."
+        }), 200
 
-        # 캐시 업데이트
-        cached_points_data = {"success": True, "data": member_points_list}
-        cache_expiry_time = datetime.now() + timedelta(minutes=CACHE_DURATION_MINUTES)
-        return jsonify(cached_points_data)
-
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 500
-    except ConnectionError as e:
-        return jsonify({"error": "아임웹 API 연결 오류", "details": str(e)}), 500
     except Exception as e:
-        print(f"서버 내부 오류: {e}")
-        return jsonify({"error": "서버 내부 오류", "details": str(e)}), 500
+        # 오류 발생 시 에러 응답 반환
+        print(f"데이터 처리 중 오류 발생: {e}")
+        return jsonify({
+            "success": False,
+            "data": [],
+            "message": f"데이터를 불러오는 중 오류가 발생했습니다: {str(e)}"
+        }), 500
 
-# Flask 앱 실행 (Koyeb/Replit에서 ENTRYPOINT로 사용)
+# --- Flask 서버 실행 ---
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000)) # 기본 포트 5000
+    # Replit 환경에서는 PORT 환경 변수를 사용하는 것이 좋습니다.
+    # Replit은 기본적으로 8080 포트를 사용하지만, Flask는 기본 5000을 사용하므로 맞춰줍니다.
+    port = int(os.environ.get('PORT', 5000)) # Replit에서 PORT 환경 변수가 없으면 5000 사용
+
+    print(f"Flask 앱 'shop' 시작 중...")
+    print(f"* Serving Flask app 'shop'")
+    print(f"* Debug mode: off")
+    print(f"WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.")
+    print(f"* Running on all addresses (0.0.0.0)")
+    print(f"* Running on http://127.0.0.1:{port}")
+    print(f"* Running on http://172.31.128.42:{port} (내부 IP, 실제 외부 접근은 Replit URL 사용)")
+
+    # Flask 앱 실행
+    app.run(host='0.0.0.0', port=port)
